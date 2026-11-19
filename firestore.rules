@@ -1,0 +1,645 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Application: 'Mahal' - Multi-tenant Muslim Mahal Community Platform (Kerala, India)
+    // All documents are strictly scoped under: /mahals/{mahalId}/...
+    //
+    // 1. Collection: mahals
+    //    Document ID: {mahalId} (e.g., 'mhl_ekrl_01')
+    //    Fields:
+    //      - id: string (optional, matches mahalId)
+    //      - name: string (required, 2-150 chars) - Official name of Mahal / Masjid
+    //      - code: string (required, 2-20 chars) - Unique identifier/joining code (e.g. 'EKRL01')
+    //      - district: string (required, 2-50 chars) - District in Kerala (e.g. 'Kozhikode')
+    //      - location: string (required, 2-150 chars) - Locality / address
+    //      - president: string (required, 2-100 chars) - Committee President name
+    //      - secretary: string (required, 2-100 chars) - General Secretary name
+    //      - phone: string (required, 7-25 chars) - Official office contact phone
+    //      - jamaathOverrides: map (required, prayer schedule overrides e.g. fajr, dhuhr, asr, maghrib, isha)
+    //      - createdAt: timestamp (optional, immutable)
+    //      - updatedAt: timestamp (optional)
+    //
+    // 2. Subcollection: mahals/{mahalId}/members/{userId}
+    //    Document ID: {userId} (matches Firebase Auth UID)
+    //    Fields:
+    //      - id: string (optional, matches userId)
+    //      - name: string (required, 2-100 chars) - Member full name
+    //      - phone: string (required, 7-25 chars) - Contact phone number
+    //      - mahalId: string (required, must match parent mahalId, immutable)
+    //      - role: string (required, 'member' | 'committeeAdmin', immutable by member)
+    //      - houseName: string (required, 2-100 chars) - House / Tharavadu name
+    //      - familyId: string (required, 2-50 chars) - Census / Mahal family ID (e.g. 'EK-FAM-142')
+    //      - avatarUrl: string (optional, valid URL <= 1000 chars)
+    //      - createdAt: timestamp (optional, immutable)
+    //      - updatedAt: timestamp (optional)
+    //
+    // 3. Subcollection: mahals/{mahalId}/members/{userId}/chanda/{chandaId}
+    //    Document ID: {chandaId} (e.g., 'ch_2026_11')
+    //    Fields:
+    //      - id: string (optional, matches chandaId)
+    //      - monthNameEn: string (required, 3-50 chars, e.g. 'November 2026')
+    //      - monthNameMl: string (required, 3-100 chars, e.g. 'നവംബർ 2026')
+    //      - year: int (required, 2020..2050)
+    //      - amount: number (required, > 0, <= 100000) - Monthly subscription / varisankhya
+    //      - status: string (required, 'paid' | 'pending' | 'overdue')
+    //      - receiptNo: string (optional, 1-50 chars) - Official receipt number
+    //      - paymentDate: timestamp (optional) - Date payment recorded/cleared
+    //      - paymentMode: string (optional, 1-50 chars, e.g. 'UPI (GPay)', 'Cash (Secretary Verified)')
+    //      - recordedBy: string (optional, 1-100 chars)
+    //      - createdAt: timestamp (optional, immutable)
+    //      - updatedAt: timestamp (optional)
+    //
+    // 4. Subcollection: mahals/{mahalId}/notices/{noticeId}
+    //    Document ID: {noticeId} (e.g., 'not_01')
+    //    Fields:
+    //      - id: string (optional, matches noticeId)
+    //      - titleEn: string (required, 3-200 chars) - Notice title in English
+    //      - titleMl: string (required, 3-200 chars) - Notice title in Malayalam
+    //      - contentEn: string (required, 5-5000 chars) - Announcement details in English
+    //      - contentMl: string (required, 5-5000 chars) - Announcement details in Malayalam
+    //      - category: string (required, 'announcement' | 'janaza' | 'khutbah' | 'event')
+    //      - author: string (required, 2-100 chars) - e.g. 'Mahal Committee', 'Madrasa Management'
+    //      - authorUid: string (optional, max 128 chars)
+    //      - createdAt: timestamp (required, immutable)
+    //      - eventDate: string (optional, max 100 chars)
+    //      - imageUrl: string (optional, valid URL <= 1000 chars)
+    //      - isImportant: bool (required)
+    //      - rsvpCount: int (required, >= 0)
+    //      - updatedAt: timestamp (optional)
+    //
+    // 5. Subcollection: mahals/{mahalId}/notices/{noticeId}/rsvps/{userId}
+    //    Document ID: {userId} (matches Firebase Auth UID)
+    //    Fields:
+    //      - userId: string (required, matches auth UID)
+    //      - hasRsvp: bool (required)
+    //      - timestamp: timestamp (required)
+    //
+    // 6. Subcollection: mahals/{mahalId}/donationCampaigns/{campaignId} (and /campaigns/{campaignId})
+    //    Document ID: {campaignId} (e.g., 'camp_ramadan_kit')
+    //    Fields:
+    //      - id: string (optional, matches campaignId)
+    //      - titleEn: string (required, 3-200 chars)
+    //      - titleMl: string (required, 3-200 chars)
+    //      - descriptionEn: string (required, 5-3000 chars)
+    //      - descriptionMl: string (required, 5-3000 chars)
+    //      - targetAmount: number (required, > 0, <= 100000000)
+    //      - raisedAmount: number (required, >= 0, <= 100000000)
+    //      - category: string (required, 2-50 chars)
+    //      - bannerUrl: string (optional, valid URL <= 1000 chars)
+    //      - isUrgent: bool (required)
+    //      - createdAt: timestamp (required, immutable)
+    //      - updatedAt: timestamp (optional)
+    //
+    // 7. Subcollection: mahals/{mahalId}/donations/{donationId}
+    //    Document ID: {donationId}
+    //    Fields:
+    //      - id: string (optional, matches donationId)
+    //      - campaignId: string (required, 1-100 chars)
+    //      - mahalId: string (required, matches parent mahalId)
+    //      - donorUid: string (required, matches request.auth.uid)
+    //      - donorName: string (required, 2-100 chars)
+    //      - donorPhone: string (optional, 7-25 chars)
+    //      - amount: number (required, > 0, <= 10000000)
+    //      - paymentMode: string (required, 1-50 chars, e.g. 'UPI (Razorpay)')
+    //      - transactionRef: string (optional, 1-100 chars)
+    //      - status: string (required, 'success' | 'pending' | 'failed')
+    //      - createdAt: timestamp (required, immutable)
+    //
+    // 8. Subcollection: mahals/{mahalId}/reports/{reportId}
+    //    Document ID: {reportId}
+    //    Fields:
+    //      - id: string (optional, matches reportId)
+    //      - title: string (required, 3-200 chars)
+    //      - reportType: string (required, 'monthly_collection' | 'audit_summary' | 'campaign_reconciliation')
+    //      - generatedAt: timestamp (required, immutable)
+    //      - generatedBy: string (required, matches admin UID, immutable)
+    //      - totalCollected: number (required, >= 0)
+    //      - totalPending: number (required, >= 0)
+    //      - totalFamilies: int (required, >= 0)
+    //      - csvUrl: string (optional, valid URL <= 1000 chars)
+    //
+    // 9. Subcollection: mahals/{mahalId}/jamaathTimes/{prayerId}
+    //    Document ID: {prayerId} (e.g. 'fajr', 'dhuhr', 'asr', 'maghrib', 'isha', 'jumaah')
+    //    Fields:
+    //      - prayer: string (required, 'fajr' | 'dhuhr' | 'asr' | 'maghrib' | 'isha' | 'jumaah')
+    //      - time: string (required, 4-10 chars, e.g. '05:15 AM')
+    //      - updatedAt: timestamp (required)
+    //      - updatedBy: string (required, admin UID)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Global Helper Functions
+    // ===============================================================
+
+    // Verify client has an active Firebase Authentication session
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    // Verify the authenticated user is the target user
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Verify tenant membership:
+    // 1. JWT custom claim: request.auth.token.mahalId == mahalId (fastest / zero-read)
+    // 2. OR active member document lookup within this specific mahal
+    function isMemberOf(mahalId) {
+      return isAuthenticated() && (
+        (request.auth.token.mahalId == mahalId) ||
+        exists(/databases/$(database)/documents/mahals/$(mahalId)/members/$(request.auth.uid))
+      );
+    }
+
+    // Verify Committee Admin role for the specific tenant:
+    // 1. JWT custom claim: role == 'committeeAdmin' and mahalId == mahalId
+    // 2. OR verified member document inside /mahals/{mahalId}/members/{uid} with role == 'committeeAdmin'
+    function isCommitteeAdmin(mahalId) {
+      return isAuthenticated() && (
+        (request.auth.token.role == 'committeeAdmin' && request.auth.token.mahalId == mahalId) ||
+        (exists(/databases/$(database)/documents/mahals/$(mahalId)/members/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/mahals/$(mahalId)/members/$(request.auth.uid)).data.role == 'committeeAdmin')
+      );
+    }
+
+    // Schema enforcement: ensure document contains only the permitted fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Schema enforcement: ensure document contains all mandatory fields
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Prevent modification of critical immutable fields during update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // String length boundary validation (Resource Exhaustion / DoS mitigation)
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+             request.resource.data[field].size() >= minLen &&
+             request.resource.data[field].size() <= maxLen;
+    }
+
+    // Optional string length boundary validation
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+             request.resource.data[field] == null ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() >= minLen &&
+              request.resource.data[field].size() <= maxLen);
+    }
+
+    // URL format and size validation
+    function isValidUrl(url) {
+      return url is string &&
+             url.size() <= 1000 &&
+             (url.matches('^https?://.*'));
+    }
+
+    // Optional URL validation
+    function isValidOptionalUrl(field) {
+      return !(field in request.resource.data) ||
+             request.resource.data[field] == null ||
+             isValidUrl(request.resource.data[field]);
+    }
+
+    // Phone format and size validation (e.g. '+91 98470 12345', '0495 2456789')
+    function isValidPhone(phone) {
+      return phone is string &&
+             phone.size() >= 7 &&
+             phone.size() <= 25 &&
+             phone.matches('^[+0-9 -]{7,25}$');
+    }
+
+    // Optional phone validation
+    function isValidOptionalPhone(field) {
+      return !(field in request.resource.data) ||
+             request.resource.data[field] == null ||
+             isValidPhone(request.resource.data[field]);
+    }
+
+    // Positive numeric validation (> 0)
+    function isPositiveNumber(field) {
+      return request.resource.data[field] is number &&
+             request.resource.data[field] > 0;
+    }
+
+    // Non-negative numeric validation (>= 0)
+    function isNonNegativeNumber(field) {
+      return request.resource.data[field] is number &&
+             request.resource.data[field] >= 0;
+    }
+
+    // Timestamp freshness validation (within past 10 minutes)
+    function isRecent(time) {
+      return time is timestamp &&
+             time > request.time - duration.value(10, 'm') &&
+             time <= request.time + duration.value(1, 'm');
+    }
+
+    // ===============================================================
+    // Domain Validator Functions (Used on both create and update)
+    // ===============================================================
+
+    // 1. Mahal Tenant Validator
+    function isValidMahal(data) {
+      let allowed = ['id', 'name', 'code', 'district', 'location', 'president', 'secretary', 'phone', 'jamaathOverrides', 'createdAt', 'updatedAt'];
+      let required = ['name', 'code', 'district', 'location', 'president', 'secretary', 'phone', 'jamaathOverrides'];
+
+      return hasOnlyAllowedFields(allowed) &&
+             hasRequiredFields(required) &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 150 &&
+             data.code is string && data.code.size() >= 2 && data.code.size() <= 20 &&
+             data.district is string && data.district.size() >= 2 && data.district.size() <= 50 &&
+             data.location is string && data.location.size() >= 2 && data.location.size() <= 150 &&
+             data.president is string && data.president.size() >= 2 && data.president.size() <= 100 &&
+             data.secretary is string && data.secretary.size() >= 2 && data.secretary.size() <= 100 &&
+             isValidPhone(data.phone) &&
+             data.jamaathOverrides is map &&
+             data.jamaathOverrides.keys().size() <= 20 &&
+             (!(data.createdAt in data) || data.createdAt is timestamp) &&
+             (!(data.updatedAt in data) || data.updatedAt is timestamp);
+    }
+
+    // 2. Member Profile Validator (strictly scoped to parent mahalId)
+    function isValidMember(data, mahalId) {
+      let allowed = ['id', 'name', 'phone', 'mahalId', 'role', 'houseName', 'familyId', 'avatarUrl', 'createdAt', 'updatedAt'];
+      let required = ['name', 'phone', 'mahalId', 'role', 'houseName', 'familyId'];
+
+      return hasOnlyAllowedFields(allowed) &&
+             hasRequiredFields(required) &&
+             data.mahalId == mahalId &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+             isValidPhone(data.phone) &&
+             data.role in ['member', 'committeeAdmin'] &&
+             data.houseName is string && data.houseName.size() >= 2 && data.houseName.size() <= 100 &&
+             data.familyId is string && data.familyId.size() >= 2 && data.familyId.size() <= 50 &&
+             isValidOptionalUrl('avatarUrl') &&
+             (!(data.createdAt in data) || data.createdAt is timestamp) &&
+             (!(data.updatedAt in data) || data.updatedAt is timestamp);
+    }
+
+    // 3. Chanda Payment Record Validator
+    function isValidChanda(data) {
+      let allowed = ['id', 'monthNameEn', 'monthNameMl', 'year', 'amount', 'status', 'receiptNo', 'paymentDate', 'paymentMode', 'recordedBy', 'createdAt', 'updatedAt'];
+      let required = ['monthNameEn', 'monthNameMl', 'year', 'amount', 'status'];
+
+      return hasOnlyAllowedFields(allowed) &&
+             hasRequiredFields(required) &&
+             data.monthNameEn is string && data.monthNameEn.size() >= 3 && data.monthNameEn.size() <= 50 &&
+             data.monthNameMl is string && data.monthNameMl.size() >= 3 && data.monthNameMl.size() <= 100 &&
+             data.year is int && data.year >= 2020 && data.year <= 2050 &&
+             data.amount is number && data.amount > 0 && data.amount <= 100000 &&
+             data.status in ['paid', 'pending', 'overdue'] &&
+             isValidOptionalString('receiptNo', 1, 50) &&
+             isValidOptionalString('paymentMode', 1, 50) &&
+             isValidOptionalString('recordedBy', 1, 100) &&
+             (!(data.paymentDate in data) || data.paymentDate is timestamp) &&
+             (!(data.createdAt in data) || data.createdAt is timestamp) &&
+             (!(data.updatedAt in data) || data.updatedAt is timestamp);
+    }
+
+    // 4. Community Notice Validator
+    function isValidNotice(data) {
+      let allowed = ['id', 'titleEn', 'titleMl', 'contentEn', 'contentMl', 'category', 'author', 'authorUid', 'createdAt', 'eventDate', 'imageUrl', 'isImportant', 'rsvpCount', 'updatedAt'];
+      let required = ['titleEn', 'titleMl', 'contentEn', 'contentMl', 'category', 'author', 'createdAt', 'isImportant', 'rsvpCount'];
+
+      return hasOnlyAllowedFields(allowed) &&
+             hasRequiredFields(required) &&
+             data.titleEn is string && data.titleEn.size() >= 3 && data.titleEn.size() <= 200 &&
+             data.titleMl is string && data.titleMl.size() >= 3 && data.titleMl.size() <= 200 &&
+             data.contentEn is string && data.contentEn.size() >= 5 && data.contentEn.size() <= 5000 &&
+             data.contentMl is string && data.contentMl.size() >= 5 && data.contentMl.size() <= 5000 &&
+             data.category in ['announcement', 'janaza', 'khutbah', 'event'] &&
+             data.author is string && data.author.size() >= 2 && data.author.size() <= 100 &&
+             isValidOptionalString('authorUid', 1, 128) &&
+             data.createdAt is timestamp &&
+             isValidOptionalString('eventDate', 1, 100) &&
+             isValidOptionalUrl('imageUrl') &&
+             data.isImportant is bool &&
+             data.rsvpCount is int && data.rsvpCount >= 0 &&
+             (!(data.updatedAt in data) || data.updatedAt is timestamp);
+    }
+
+    // 5. Notice RSVP Tracking Validator
+    function isValidRsvp(data, userId) {
+      let allowed = ['userId', 'hasRsvp', 'timestamp'];
+      return hasOnlyAllowedFields(allowed) &&
+             data.userId == userId &&
+             data.hasRsvp is bool &&
+             data.timestamp is timestamp;
+    }
+
+    // 6. Donation Campaign Validator
+    function isValidDonationCampaign(data) {
+      let allowed = ['id', 'titleEn', 'titleMl', 'descriptionEn', 'descriptionMl', 'targetAmount', 'raisedAmount', 'category', 'bannerUrl', 'isUrgent', 'createdAt', 'updatedAt'];
+      let required = ['titleEn', 'titleMl', 'descriptionEn', 'descriptionMl', 'targetAmount', 'raisedAmount', 'category', 'isUrgent', 'createdAt'];
+
+      return hasOnlyAllowedFields(allowed) &&
+             hasRequiredFields(required) &&
+             data.titleEn is string && data.titleEn.size() >= 3 && data.titleEn.size() <= 200 &&
+             data.titleMl is string && data.titleMl.size() >= 3 && data.titleMl.size() <= 200 &&
+             data.descriptionEn is string && data.descriptionEn.size() >= 5 && data.descriptionEn.size() <= 3000 &&
+             data.descriptionMl is string && data.descriptionMl.size() >= 5 && data.descriptionMl.size() <= 3000 &&
+             data.targetAmount is number && data.targetAmount > 0 && data.targetAmount <= 100000000 &&
+             data.raisedAmount is number && data.raisedAmount >= 0 && data.raisedAmount <= 100000000 &&
+             data.category is string && data.category.size() >= 2 && data.category.size() <= 50 &&
+             isValidOptionalUrl('bannerUrl') &&
+             data.isUrgent is bool &&
+             data.createdAt is timestamp &&
+             (!(data.updatedAt in data) || data.updatedAt is timestamp);
+    }
+
+    // 7. Member Donation Validator (strictly scoped to parent mahalId)
+    function isValidDonation(data, mahalId) {
+      let allowed = ['id', 'campaignId', 'mahalId', 'donorUid', 'donorName', 'donorPhone', 'amount', 'paymentMode', 'transactionRef', 'status', 'createdAt'];
+      let required = ['campaignId', 'mahalId', 'donorUid', 'donorName', 'amount', 'paymentMode', 'status', 'createdAt'];
+
+      return hasOnlyAllowedFields(allowed) &&
+             hasRequiredFields(required) &&
+             data.mahalId == mahalId &&
+             data.campaignId is string && data.campaignId.size() >= 1 && data.campaignId.size() <= 100 &&
+             data.donorUid is string && data.donorUid.size() >= 1 && data.donorUid.size() <= 128 &&
+             data.donorName is string && data.donorName.size() >= 2 && data.donorName.size() <= 100 &&
+             isValidOptionalPhone('donorPhone') &&
+             data.amount is number && data.amount > 0 && data.amount <= 10000000 &&
+             data.paymentMode is string && data.paymentMode.size() >= 1 && data.paymentMode.size() <= 50 &&
+             isValidOptionalString('transactionRef', 1, 100) &&
+             data.status in ['success', 'pending', 'failed'] &&
+             data.createdAt is timestamp;
+    }
+
+    // 8. Collection Report Validator
+    function isValidReport(data) {
+      let allowed = ['id', 'title', 'reportType', 'generatedAt', 'generatedBy', 'totalCollected', 'totalPending', 'totalFamilies', 'csvUrl'];
+      let required = ['title', 'reportType', 'generatedAt', 'generatedBy', 'totalCollected', 'totalPending', 'totalFamilies'];
+
+      return hasOnlyAllowedFields(allowed) &&
+             hasRequiredFields(required) &&
+             data.title is string && data.title.size() >= 3 && data.title.size() <= 200 &&
+             data.reportType in ['monthly_collection', 'audit_summary', 'campaign_reconciliation'] &&
+             data.generatedAt is timestamp &&
+             data.generatedBy is string && data.generatedBy.size() >= 1 && data.generatedBy.size() <= 128 &&
+             data.totalCollected is number && data.totalCollected >= 0 &&
+             data.totalPending is number && data.totalPending >= 0 &&
+             data.totalFamilies is int && data.totalFamilies >= 0 &&
+             isValidOptionalUrl('csvUrl');
+    }
+
+    // 9. Jamaath Time Override Validator
+    function isValidJamaathTime(data) {
+      let allowed = ['prayer', 'time', 'updatedAt', 'updatedBy'];
+      let required = ['prayer', 'time', 'updatedAt', 'updatedBy'];
+
+      return hasOnlyAllowedFields(allowed) &&
+             hasRequiredFields(required) &&
+             data.prayer in ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha', 'jumaah'] &&
+             data.time is string && data.time.size() >= 4 && data.time.size() <= 15 &&
+             data.updatedAt is timestamp &&
+             data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128;
+    }
+
+    // ===============================================================
+    // Root Match: Default Deny All
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // Multi-tenant Scoping: /mahals/{mahalId}
+    // ===============================================================
+    match /mahals/{mahalId} {
+
+      // Read: Authenticated members of this mahal can read mahal profile & prayer overrides.
+      // Cross-mahal reads are blocked.
+      allow read: if isMemberOf(mahalId);
+
+      // Create: Platform bootstrapped superadmin or authorized committee admin
+      allow create: if isCommitteeAdmin(mahalId) && isValidMahal(request.resource.data);
+
+      // Update: Only committee admins of this mahal can update info or jamaath overrides
+      allow update: if isCommitteeAdmin(mahalId) &&
+                       isValidMahal(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['id', 'code', 'createdAt']);
+
+      // Delete: Prevent accidental destruction of mahal tenant root
+      allow delete: if false;
+
+      // -------------------------------------------------------------
+      // Subcollection: Members (/mahals/{mahalId}/members/{userId})
+      // -------------------------------------------------------------
+      match /members/{userId} {
+
+        // Read: PII Protection: Only the owner themselves or a verified Committee Admin
+        // of this mahal can read a member profile (phone, houseName, familyId).
+        // Regular members CANNOT read other members' private profiles.
+        allow read: if isMemberOf(mahalId) && (isOwner(userId) || isCommitteeAdmin(mahalId));
+
+        // Create:
+        // - User can create their own member profile (isOwner)
+        // - RBAC Invariant: Regular member CANNOT assign themselves 'committeeAdmin' role
+        // - Only existing committeeAdmin can create or assign 'committeeAdmin' roles
+        allow create: if isAuthenticated() &&
+                         isValidMember(request.resource.data, mahalId) &&
+                         (
+                           (isOwner(userId) && request.resource.data.role == 'member') ||
+                           isCommitteeAdmin(mahalId)
+                         );
+
+        // Update:
+        // - Member can update their own personal info (name, houseName, phone, avatar)
+        // - RBAC Invariant: Member CANNOT elevate their role, alter their mahalId, or change ID
+        // - Committee Admin can update member details/roles within their mahal
+        allow update: if isAuthenticated() &&
+                         isValidMember(request.resource.data, mahalId) &&
+                         areImmutableFieldsUnchanged(['mahalId', 'createdAt']) &&
+                         (
+                           (isOwner(userId) &&
+                            request.resource.data.role == resource.data.role &&
+                            (!('id' in resource.data) || request.resource.data.id == resource.data.id)) ||
+                           isCommitteeAdmin(mahalId)
+                         );
+
+        // Delete: Only committee admin can remove a member record
+        allow delete: if isCommitteeAdmin(mahalId);
+
+        // -----------------------------------------------------------
+        // Subcollection: Chanda Records (/mahals/{mahalId}/members/{userId}/chanda/{chandaId})
+        // -----------------------------------------------------------
+        match /chanda/{chandaId} {
+
+          // Read: Member can view their own payment history; Admins can view for audit/reporting
+          allow read: if isMemberOf(mahalId) && (isOwner(userId) || isCommitteeAdmin(mahalId));
+
+          // Create:
+          // - Member can initiate an online payment record for themselves
+          // - Committee Admin can record chanda for any member in their mahal
+          allow create: if isMemberOf(mahalId) &&
+                           isValidChanda(request.resource.data) &&
+                           (isOwner(userId) || isCommitteeAdmin(mahalId));
+
+          // Update:
+          // - Only Committee Admin can mark offline cash payments, verify receipts, or adjust status.
+          // - Financial Invariant: Core billing fields (year, month, amount) remain immutable
+          allow update: if isCommitteeAdmin(mahalId) &&
+                           isValidChanda(request.resource.data) &&
+                           areImmutableFieldsUnchanged(['id', 'monthNameEn', 'monthNameMl', 'year', 'amount', 'createdAt']);
+
+          // Delete: Only Committee Admin can delete erroneous draft records
+          allow delete: if isCommitteeAdmin(mahalId);
+        }
+      }
+
+      // -------------------------------------------------------------
+      // Subcollection: Community Notices (/mahals/{mahalId}/notices/{noticeId})
+      // -------------------------------------------------------------
+      match /notices/{noticeId} {
+
+        // Read: Any verified member of this mahal can read community notices
+        allow read: if isMemberOf(mahalId);
+
+        // Create: Only Committee Admins can publish notices (Khutbah, Janaza, Events)
+        allow create: if isCommitteeAdmin(mahalId) &&
+                         isValidNotice(request.resource.data);
+
+        // Update:
+        // 1. Committee Admin can edit full notice content with validation
+        // 2. Verified members can toggle RSVP (atomic +/- 1 on rsvpCount only, no content tampering)
+        allow update: if isMemberOf(mahalId) && (
+          (isCommitteeAdmin(mahalId) &&
+           isValidNotice(request.resource.data) &&
+           areImmutableFieldsUnchanged(['id', 'createdAt'])) ||
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rsvpCount']) &&
+           math.abs(request.resource.data.rsvpCount - resource.data.rsvpCount) == 1 &&
+           request.resource.data.rsvpCount >= 0)
+        );
+
+        // Delete: Only Committee Admin can delete notices
+        allow delete: if isCommitteeAdmin(mahalId);
+
+        // Subcollection: RSVP Tracking (/mahals/{mahalId}/notices/{noticeId}/rsvps/{userId})
+        match /rsvps/{rsvpUserId} {
+          allow read: if isMemberOf(mahalId);
+          allow create: if isOwner(rsvpUserId) && isMemberOf(mahalId) && isValidRsvp(request.resource.data, rsvpUserId);
+          allow update: if isOwner(rsvpUserId) && isMemberOf(mahalId) && isValidRsvp(request.resource.data, rsvpUserId);
+          allow delete: if isOwner(rsvpUserId) && isMemberOf(mahalId);
+        }
+      }
+
+      // -------------------------------------------------------------
+      // Subcollection: Donation Campaigns (/mahals/{mahalId}/donationCampaigns/{campaignId})
+      // -------------------------------------------------------------
+      match /donationCampaigns/{campaignId} {
+
+        // Read: Verified members can view active campaigns and progress
+        allow read: if isMemberOf(mahalId);
+
+        // Create: Only Committee Admins can launch donation campaigns
+        allow create: if isCommitteeAdmin(mahalId) &&
+                         isValidDonationCampaign(request.resource.data);
+
+        // Update:
+        // 1. Committee Admin can update campaign details
+        // 2. Verified donors can atomically increment raisedAmount on donation
+        allow update: if isMemberOf(mahalId) && (
+          (isCommitteeAdmin(mahalId) &&
+           isValidDonationCampaign(request.resource.data) &&
+           areImmutableFieldsUnchanged(['id', 'createdAt'])) ||
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['raisedAmount', 'updatedAt']) &&
+           request.resource.data.raisedAmount > resource.data.raisedAmount &&
+           request.resource.data.raisedAmount <= 100000000)
+        );
+
+        // Delete: Only Committee Admin
+        allow delete: if isCommitteeAdmin(mahalId);
+      }
+
+      // Alias collection match for /campaigns/{campaignId} to ensure compatibility
+      match /campaigns/{campaignId} {
+        allow read: if isMemberOf(mahalId);
+        allow create: if isCommitteeAdmin(mahalId) && isValidDonationCampaign(request.resource.data);
+        allow update: if isMemberOf(mahalId) && (
+          (isCommitteeAdmin(mahalId) && isValidDonationCampaign(request.resource.data) && areImmutableFieldsUnchanged(['id', 'createdAt'])) ||
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['raisedAmount', 'updatedAt']) &&
+           request.resource.data.raisedAmount > resource.data.raisedAmount &&
+           request.resource.data.raisedAmount <= 100000000)
+        );
+        allow delete: if isCommitteeAdmin(mahalId);
+      }
+
+      // -------------------------------------------------------------
+      // Subcollection: Donations (/mahals/{mahalId}/donations/{donationId})
+      // -------------------------------------------------------------
+      match /donations/{donationId} {
+
+        // Read:
+        // - Donor can view their own donation receipts
+        // - Committee Admins can view all donations for audit/reconciliation
+        allow read: if isMemberOf(mahalId) && (
+          isCommitteeAdmin(mahalId) ||
+          (isAuthenticated() && request.auth.uid == resource.data.donorUid)
+        );
+
+        // Create:
+        // - Any verified member can donate to a campaign in their mahal
+        // - Integrity: donorUid must equal auth.uid (no spoofing) and amount > 0
+        // - Committee Admin can record offline/received donations
+        allow create: if isMemberOf(mahalId) &&
+                         isValidDonation(request.resource.data, mahalId) &&
+                         (
+                           (request.resource.data.donorUid == request.auth.uid) ||
+                           isCommitteeAdmin(mahalId)
+                         );
+
+        // Update:
+        // - Only Committee Admin can update donation payment status/reference
+        // - Financial Invariant: Core transaction fields (donorUid, amount, campaignId) immutable
+        allow update: if isCommitteeAdmin(mahalId) &&
+                         isValidDonation(request.resource.data, mahalId) &&
+                         areImmutableFieldsUnchanged(['id', 'campaignId', 'mahalId', 'donorUid', 'amount', 'createdAt']);
+
+        // Delete: Deny deletion of financial audit trail
+        allow delete: if false;
+      }
+
+      // -------------------------------------------------------------
+      // Subcollection: Reports (/mahals/{mahalId}/reports/{reportId})
+      // -------------------------------------------------------------
+      match /reports/{reportId} {
+
+        // Committee Admins only: financial summaries, collection spreadsheets, CSV exports
+        allow read: if isCommitteeAdmin(mahalId);
+        allow create: if isCommitteeAdmin(mahalId) && isValidReport(request.resource.data);
+        allow update: if isCommitteeAdmin(mahalId) &&
+                         isValidReport(request.resource.data) &&
+                         areImmutableFieldsUnchanged(['id', 'generatedAt', 'generatedBy']);
+        allow delete: if isCommitteeAdmin(mahalId);
+      }
+
+      // -------------------------------------------------------------
+      // Subcollection: Jamaath Times (/mahals/{mahalId}/jamaathTimes/{prayerId})
+      // -------------------------------------------------------------
+      match /jamaathTimes/{prayerId} {
+
+        // Read: All members of this mahal can read congregation times
+        allow read: if isMemberOf(mahalId);
+
+        // Write: Only Committee Admin can override congregation schedules
+        allow create, update: if isCommitteeAdmin(mahalId) && isValidJamaathTime(request.resource.data);
+        allow delete: if isCommitteeAdmin(mahalId);
+      }
+    }
+  }
+}
